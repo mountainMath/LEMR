@@ -1,0 +1,255 @@
+---
+title: "ggplot_theme"
+output: html_document
+date: '2023-12-08'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggplot2)
+library(cmhc)
+library(cancensus)
+library(leaflet)
+library(ggrepel)
+
+# install.packages('showtext', dependencies = TRUE)
+library(showtext)
+
+```
+
+Notes:
+- use `+ theme_lemr` at end of ggplot to apply base theme
+- add additional `theme()` properties to customize elements as needed (mostly for hiding things)
+- include x-axis (with ticks) in most plots; y-axis (with ticks) is optional
+- use `size = 3.5` for geom_text or other annotations
+- chart title is sentence case
+- axis titles are lowercase
+- avoid use of short forms and acronymns in labels and axes
+- include `caption: LEMR Housing Monitor` in all charts
+- ggsave dimensions are 640x480 or 480x640; str_wrap on titles for these dimensions are str_wrap(64) and str_wrap(48), respectively
+
+```{r define_ggplot_theme}
+
+# define palette
+highlight_colour <- "#00ACA0"
+alternate_colour <- "#8661eb"
+gray_colour <- "#BFBFBF"
+purple_gradient <- c("#c9c3ff", "#a092ff", "#8661eb", "#5e24b3", "#37007B")
+green_gradient <- c("#b6fc77", "#56d444", "#35a626", "#2b8520", "#26661f")
+distinctive_palette <- c("#D30C55", "#FCBCDA", "#FF8004", "#F9C606")
+
+# set fonts
+sysfonts::font_add_google("Gabarito", "gabarito", db_cache = FALSE)
+showtext_auto() 
+font_family <- "gabarito"
+font_colour <- "#282828"
+
+# ggplot theme
+theme_lemr <- theme_minimal(base_family = "gabarito", base_size = 12) +
+  theme(panel.grid = element_blank(),
+        panel.border = element_blank(),
+        # panel.border = element_rect(fill = "transparent", colour = gray_colour),
+        plot.title = element_text(size = 16, lineheight = 1.15, face = "bold", margin = margin(0, 0, 24, 0)),
+        plot.title.position = "plot",
+        plot.caption = element_text(colour = gray_colour, size = 10, margin =margin(12, 0, 0, 0)),
+        plot.caption.position = "plot",
+        axis.title.x = element_text(face = "plain", size = 12, margin = margin(12, 0, 0, 0)),
+        axis.title.y = element_text(face = "plain", size = 12, margin = margin(0, 12, 0, 0)),
+        axis.text.x = element_text(face = "plain", size = 12),
+        axis.text.y = element_text(face = "plain", size = 12),
+        axis.line.x = element_line(colour = gray_colour),
+        axis.ticks.x = element_line(colour = gray_colour),
+        text = element_text(colour = font_colour),
+        legend.position = "none")
+
+```
+
+
+```{r read_data}
+
+# read census tract geographies
+halifax_ct <- get_census("CA21",
+                     regions=list(CSD="1209034"),
+                     level = "CT",
+                     geo_format = "sf")
+
+# read rms data
+year_of_construction_by_ct <- get_cmhc(survey="Rms", series="Rental Universe", dimension="Year of Construction",
+                       breakdown="Census Tracts",  geo_uid="12205") |> 
+  janitor::clean_names()
+
+# read lem custom tab
+halifax_lem <- read_rds(here::here("data", "lem_data_filtered.rds")) |> 
+  janitor::clean_names()
+
+halifax_lem_ct_2016 <- halifax_lem |> 
+  filter(year == "2016" & geography != "205") |> 
+  # exclude cell sizes less than 30; since rate_lem is based on two cells, total should be less than 60
+  mutate(rate_lem = if_else(total_lem_units + non_lem_units < 60, NA_real_, rate_lem))
+         
+# read residential standards violations
+residential_standards <- readr::read_csv(here::here("data", "halifax_residential_standards_violations-point.csv")) |> 
+  janitor::clean_names() |> 
+  mutate(census_tract = if_else(nchar(census_tract) <= 7, paste0(census_tract, ".00"), as.character(census_tract)))
+
+```
+
+```{r bar_chart}
+
+# remove CTs with suppressed rates and add highlights for plot
+halifax_lem_ct_2016_w_highlights <- halifax_lem_ct_2016 |> 
+  filter(!is.na(rate_lem)) |> 
+  mutate(highlight = if_else(geography %in% c("2050002.00", "2050001.00"), "highlight", "default"),
+         # add small value to zero-value CT so that a small bar shows in chart
+         rate_lem = if_else(rate_lem == 0, 0.01, rate_lem))
+
+# generate plot
+p_bar_chart <- ggplot(data = halifax_lem_ct_2016_w_highlights, aes(x = reorder(geography, desc(rate_lem)), y = rate_lem, fill = highlight)) +
+  geom_col(colour = "white", linewidth = 0.5) +
+  geom_text(aes(y = -0.02, label = geography, colour = highlight), angle = 90, hjust = 1, vjust = 0.5, size = 3.5) +
+  geom_hline(yintercept = -0.01, colour = gray_colour) +
+  scale_fill_manual(values = c("highlight" = highlight_colour, "default" = gray_colour)) +
+  scale_colour_manual(values = c("highlight" = highlight_colour, "default" = "transparent")) +
+  scale_y_continuous(expand = expansion(c(0.24, 0)), breaks = c(0, 0.25, 0.5, 0.75, 1), labels = scales::label_percent()) +
+  labs(title = "Proportion of private market units rented in the last year that were in the LEM (2016)" |> str_wrap(64), 
+       x = "census tracts ordered by prevalence of LEM units", 
+       y = NULL, 
+       caption = "Source: LEMR Housing Monitor") +
+  theme_lemr +
+  theme(axis.line.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+p_bar_chart
+
+# save
+ggsave("bar_chart.png", p_bar_chart, width = 640, height = 480, dpi = 72, units = "px", path = "figures")
+
+```
+
+```{r slope_chart}
+
+# prep data for plot; get change in LEM from 2016 to 2021
+change_in_lem_for_CT <- halifax_lem |> 
+  filter(geography == "2050002.00") |> 
+  select(year, contains("prop"), all_family_sizes = rate_lem) |> 
+  pivot_longer(cols = -year, names_to = "unit_type", values_to = "rate_lem") |> 
+  mutate(label = case_when(
+    unit_type == "prop_lem_0_and_1_bedrooms" ~ "1-person", 
+    unit_type == "prop_lem_1_and_2_bedrooms" ~ "2-persons", 
+    unit_type == "prop_lem_2_and_3_bedrooms" ~ "3-persons", 
+    unit_type == "prop_lem_3_plus_bedrooms" ~ "4+ persons", 
+    unit_type == "all_family_sizes" ~ "All family sizes")) |> 
+  group_by(unit_type) |> 
+  arrange(unit_type, year) |> 
+  mutate(percent_change = scales::percent(round(rate_lem - lag(rate_lem), 2)),
+         label = if_else(year == "2016", scales::percent(rate_lem), label),
+         label = if_else(year == "2016" & unit_type == "1-person", NA_character_, label),
+         label = if_else(year == "2021", glue::glue("{label}: {scales::percent(rate_lem)} ({percent_change})"), label), 
+         highlight = if_else(unit_type == "all_family_sizes", "highlight", "default"))
+
+slope_chart_labels_2016 <- change_in_lem_for_CT |> 
+  filter(year == "2016")
+
+slope_chart_labels_2021 <- change_in_lem_for_CT |> 
+  filter(year == "2021")
+
+# generate plot
+p_slope_chart <- ggplot(change_in_lem_for_CT, aes(year, rate_lem, group = unit_type, colour = highlight)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3, show.legend = FALSE) +
+  ggrepel::geom_text_repel(data = slope_chart_labels_2016, aes(x = year, y = rate_lem, label = label), hjust = 1, size = 3.5, nudge_x = -0.05, min.segment.length = 100, direction = "y", xlim = c(-Inf, Inf), ylim = c(-Inf, Inf), show.legend = FALSE, colour = font_colour) +
+  ggrepel::geom_text_repel(data = slope_chart_labels_2021, aes(x = year, y = rate_lem, label = label), hjust = 0, size = 3.5, nudge_x = 0.05, min.segment.length = 100, direction = "y", xlim = c(-Inf, Inf), ylim = c(-Inf, Inf), show.legend = FALSE, colour = font_colour) +
+  scale_colour_manual(values = c("highlight" = highlight_colour, "default" = alternate_colour)) +
+  scale_y_continuous(expand = expansion(c(0.1, 0.035)), labels = scales::label_percent()) +
+  scale_x_discrete(expand = expansion(c(0.3, 0.8))) +
+  labs(title = "Change in availability of LEM units in census tract number 2050002.00 by family size" |> str_wrap(48), 
+       x = NULL, 
+       y = NULL, 
+       caption = "Source: LEMR Housing Monitor") +
+  theme_lemr +
+  theme(axis.text.y = element_blank(),
+        axis.text.x = element_text(face = "plain", size = 12))
+
+p_slope_chart
+
+# save
+ggsave("slope_chart.png", p_slope_chart, width = 480, height = 640, dpi = 72, units = "px", path = "figures")
+
+```
+
+```{r line_chart}
+
+# prep data for plot; calculate cumulative sum for halifax and ct of interest
+year_of_construction_selected_ct <- year_of_construction_by_ct |>
+  group_by(year_of_construction) |> 
+  mutate(average_ct = mean(value, na.rm = TRUE) |> round()) |> 
+  ungroup() |> 
+  filter(geo_uid == "2050002.00" & year_of_construction != "Total") |> 
+  mutate(cumulative_units = cumsum(value),
+         average_ct_cumulative_units = cumsum(average_ct)) |> 
+  pivot_longer(cols = c("cumulative_units", "average_ct_cumulative_units"), names_to = "geography", values_to = "cumulative_count") |> 
+  mutate(geography = str_replace_all(geography, c("average_ct_cumulative_units" = "Average Halifax\nCensus Tract", "cumulative_units" = "Census Tract\n2050002.00")))
+
+# isolate last year for labels
+year_of_construction_selected_ct_final <- year_of_construction_selected_ct |> 
+  filter(year_of_construction == "2000 or Later")
+
+# generate plot
+p_line_chart <- ggplot(year_of_construction_selected_ct, aes(x = year_of_construction, y = cumulative_count, colour = geography, group = geography)) +
+  geom_line(linewidth = 1) +
+  geom_point(data = year_of_construction_selected_ct_final, aes(x = year_of_construction, y = cumulative_count, colour = geography, group = geography), size = 3) +
+  geom_text(data = year_of_construction_selected_ct_final, aes(x = year_of_construction, y = cumulative_count, label = geography), hjust = 0, nudge_x = 0.1, colour = font_colour, size = 3.5) +
+  scale_colour_manual(values = c("Census Tract\n2050002.00" = highlight_colour, "Average Halifax\nCensus Tract" = gray_colour)) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(c(0, 0.1))) +
+  scale_x_discrete(expand = expansion(c(0, 0.35))) +
+  labs(title = "Primary market rental units created over time" |> str_wrap(64), 
+       x = "period of construction", 
+       y = "number of units", 
+       caption = "Source: LEMR Housing Monitor") +
+  theme_lemr +
+  theme(axis.text.x = element_text(colour = font_colour, size = 12),
+        axis.line.y.left = element_line(colour = gray_colour),
+        axis.ticks.y.left = element_line(colour = gray_colour))
+  
+p_line_chart
+
+# save
+ggsave("line_chart.png", p_line_chart, width = 640, height = 480, dpi = 72, units = "px", path = "figures")
+
+```
+
+```{r scatter_plot}
+
+# prep data for plot; summarize residential violations by census tract
+residential_standards_by_year_of_construction <- residential_standards |> 
+  inner_join(halifax_lem_ct_2016, by = c("census_tract" = "geography")) |> 
+  group_by(census_tract, prop_lem_0_and_1_bedrooms) |> 
+  summarize(residential_standards_violations = sum(!is.na(residential_violations_case_number))) |> 
+  mutate(highlight = if_else(census_tract == "2050002.00", "highlight", "default"))
+
+# generate plot
+p_scatter_plot <- ggplot(residential_standards_by_year_of_construction, aes(prop_lem_0_and_1_bedrooms, residential_standards_violations, colour = highlight)) +
+  geom_point(size = 2.5) +
+  geom_text(aes(label = census_tract, alpha = highlight), size = 3.5, nudge_x = 0.02, hjust = 0, show.legend = FALSE) +
+  scale_colour_manual(values = c("highlight" = highlight_colour, "default" = gray_colour)) +
+  scale_alpha_manual(values = c("highlight" = 1, "default" = 0)) +
+  scale_x_continuous(expand = expansion(c(0.015, 0.25)), breaks = c(0, 0.25, 0.5, 0.75, 1), labels = scales::label_percent()) +
+  scale_y_continuous(expand = expansion(c(0.015, 0.015))) +
+  labs(title = "Census tracts by LEM availability for 1-person households and number of residential standards violations" |> str_wrap(64),
+       x = "availability of LEM units to 1-person households", 
+       y = "number of residential standards violations",
+       caption = "Source: LEMR Housing Monitor") +
+  theme_lemr +
+  theme(panel.grid.major = element_line(colour = "#dddddd"),
+        panel.border = element_rect(fill = "transparent", colour = gray_colour),
+        axis.ticks.y = element_line(colour = "#dddddd"))
+
+p_scatter_plot
+
+# save
+ggsave("scatter_plot.png", p_scatter_plot, width = 640, height = 480, dpi = 72, units = "px", path = "figures")
+
+```

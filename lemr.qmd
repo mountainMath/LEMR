@@ -12,6 +12,10 @@ format:
     papersize: letter
     fontsize: 12pt
     fig-format: png
+  docx:
+    fig-width: 8
+    fig-height: 6
+    fig-format: png
 execute:
   echo: false
   warning: false
@@ -23,6 +27,7 @@ library(cancensus)
 library(dotdensity)
 library(sf)
 library(mountainmathHelpers)
+source(here::here("R/lemr_theme.R"))
 
 db_list <- dir(here::here("sqlite"), full.names = TRUE)
 
