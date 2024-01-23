@@ -1,0 +1,118 @@
+---
+title: "LEMR explorations"
+author: "Jens von Bergmann"
+date: "2023-11-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cancensus)
+```
+
+```{r}
+db_list <- dir(here::here("sqlite"), full.names = TRUE)
+conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[1])
+
+data_csd <- conn |> tbl("csd") |> 
+  filter(region=="Vancouver") |>
+  collect()
+
+DBI::dbDisconnect(conn)
+
+data_ct$tenure |> unique()
+
+
+md_csd <- data_csd |>
+  filter(mobility_status=="Total - Mobility status 5 years ago of the primary household maintainer",
+         tenure=="Total - Tenure",
+         structural_type_of_dwelling=="Total - Structural type of dwelling",
+         condominium_status=="Total - Condominium Status",
+         household_type=="Total - Household type",
+         core_housing_need=="Total - Core housing need")
+
+geo_data_csd <- get_census("2021",regions=list(CMA="59933"),geo_format="sf",level="CSD")
+
+geo_data_csd |>
+  select(GeoUID,Dwellings,Households,Name=name) |>
+  left_join(md_csd,by=c("GeoUID"="geography")) |>
+  mutate(total_units=as.numeric(total_units)) |>
+  select(GeoUID,Name,total_units,Dwellings,Households) |>
+  sf::st_drop_geometry() |>
+  mutate(diff=total_units-Households) |>
+  arrange(diff) |>
+  pull(diff) |>
+  range(na.rm=TRUE)
+
+```
+
+
+```{r}
+conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[grepl("ct_cma_2021",db_list)])
+data_ct <- conn |> tbl("ct_cma") |> 
+  filter(region=="Vancouver") |>
+  collect()
+
+geo_data_ct <- get_census("2021",regions=list(CMA="59933"),geo_format="sf",level="CT")
+
+
+data_ct$core_housing_need |> unique()
+
+md_ct <- data_ct |>
+  filter(mobility_status=="Total - Mobility status 5 years ago of the primary household maintainer",
+         tenure=="Total - Tenure including subsidized dwelling",
+         structural_type_of_dwelling=="Total - Structural type of dwelling",
+         condominium_status=="Total - Condominium Status",
+         household_type=="Total - Household type",
+         core_housing_need=="Total - Core housing need")
+
+geo_data_ct |> select(GeoUID,Dwellings,Households) |>
+  left_join(md_ct,by=c("GeoUID"="geography")) |>
+  mutate(total_units=as.numeric(total_units)) |>
+  select(GeoUID,total_units,Dwellings,Households) |>
+  sf::st_drop_geometry() |>
+  mutate(diff=total_units-Households) |>
+  pull(diff) |>
+  range(na.rm=TRUE)
+```
+
+
+```{r}
+geo_data_csd |> select(GeoUID,Dwellings,Households) |>
+  left_join(md_csd,by=c("GeoUID"="geography")) |>
+  mutate(total_units=as.numeric(total_units)) |>
+  select(GeoUID,total_units,Dwellings,Households) |>
+ggplot(aes(fill=total_units-Households)) +
+  geom_sf() 
+```
+
+```{r}
+geo_data_ct |> select(GeoUID,Dwellings,Households) |>
+  left_join(md_ct,by=c("GeoUID"="geography")) |>
+  mutate(total_units=as.numeric(total_units)) |>
+  select(GeoUID,total_units,Dwellings,Households) |>
+ggplot(aes(fill=total_units-Households)) +
+  geom_sf() 
+```
+
+
+
+```{r}
+conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[grepl(paste0("ct_cma_",2006),db_list)])
+data <- conn |> 
+  tbl("ct_cma") |> 
+  filter(region=="Montréal",geography=="462") |> 
+  filter(mobility_status=="Total - Mobility status 5 years ago of the primary household maintainer",
+         tenure!="Total - Tenure including subsidized dwelling",
+         tenure!="Total - Tenure",
+         structural_type_of_dwelling=="Total - Structural type of dwelling",
+         condominium_status=="Total - Condominium Status",
+         household_type=="Total - Household type",
+         core_housing_need=="Total - Core housing need") |>
+  filter(tenure=="Owners") |>
+  collect()
+
+data |> select(-matches("2_and_3|3_plus")) |> unique()
+```
+
