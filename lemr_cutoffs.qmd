@@ -1,0 +1,75 @@
+---
+title: "LEMR cutoffs"
+author: "Jens von Bergmann"
+format:
+  html:
+    fig-width: 8
+    fig-height: 6
+    output-file: "index"
+  pdf:
+    fig-width: 8
+    fig-height: 6
+    papersize: letter
+    fontsize: 12pt
+    fig-format: png
+  docx:
+    fig-width: 8
+    fig-height: 6
+    fig-format: png
+execute:
+  echo: false
+  warning: false
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(cancensus)
+library(dotdensity)
+library(canpumf)
+library(sf)
+library(mountainmathHelpers)
+source(here::here("R/lemr_theme.R"))
+```
+
+```{r}
+pumf_2021 <- get_pumf("Census",pumf_version="2021") |>
+  label_pumf_data(rename_columns = FALSE) |>
+  mutate(CMA=fct_recode(CMA,"Other" = "Other census metropolitan areas, census agglomerations and other geographies")) |>
+  mutate(Year="2021") |>
+  mutate(across(c(TOTINC,VALUE),\(x)ifelse(x>=88888888,NA,x)))  |>
+  mutate(GROSRT=SHELCO) |>
+  mutate(ef_lower=case_when(EFINC=="Under $2,000" ~ 0,
+                            TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(EFINC),"^\\$[\\d,]+")))),
+         ef_upper=case_when(EFINC=="$250,000 and over" ~ 350000,
+                            TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(EFINC),"\\$[\\d,]+$"))))) %>%
+  mutate(ef_income=(ef_lower+ef_upper)/2)
+
+```
+
+```{r}
+pumf_2021 |>
+  filter(EFSIZE !="Not available") |>
+  filter(EFSIZE !="Person not in an economic family" | TOTINC>0) |>
+  mutate(EFCAT=case_when(EFSIZE %in% c("Person not in an economic family","2 persons","3 persons") ~ EFSIZE,
+                         TRUE ~ "4 persons or more")) |>
+  filter(TENUR=="Renter or Dwelling provided by the local government, First Nation or Indian band",
+         SUBSIDY=="Not subsidized",
+         EFSIZE =="Person not in an economic family" | PRIHM=="Person is primary maintainer" ,
+         EFINC!="Not available") |> 
+  summarize(Income=spatstat.geom::weighted.median(ef_income,w=WEIGHT),
+            .by=c(CMA,EFCAT)) |>
+  filter(CMA %in% c("Toronto","Vancouver","Montréal","Calgary","Edmonton","Ottawa - Gatineau","Halifax","Winnipeg")) |>
+  mutate(Cutoff=Income*0.3) |>
+  arrange(EFCAT,CMA)
+```
+
+```{r}
+pumf_2021 |> 
+  filter(TENUR=="Renter or Dwelling provided by the local government, First Nation or Indian band",
+         SUBSIDY=="Not subsidized",
+         EFSIZE=="3 persons",
+         PRIHM=="Person is primary maintainer" ) |> 
+  summarize(ef_income=mean(ef_income,na.rm=TRUE),.by=CMA)
+```
+
+

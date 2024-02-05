@@ -1,0 +1,138 @@
+---
+Halifax:
+  pr: Nova Scotia
+  level: CSD
+  id:
+    Halifax: 1209034
+Calgary:
+  pr: Alberta
+  level: CSD
+  id:
+    City of Calgary: 4806016
+Winnipeg:
+  pr: Manitoba
+  level: CSD
+  id:
+    City of Winnipeg: 4611040
+Toronto:
+  pr: Ontario
+  level: CSD
+  id:
+  # Toronto
+    City of Toronto:
+    - 3520005
+  # Peel: Mississauga, Brampton, Caledon
+    Peel:
+    - 3521005
+    - 3521010
+    - 3521024
+  # York: Aurora, East Gwillimbury, Georgina, King, Markham,
+  # Newmarket, Richmond Hill, Vaughan, Whitchurch–Stouffville
+    York:
+    - 3519046
+    - 3519054
+    - 3519070
+    - 3519049
+    - 3519036
+    - 3519048
+    - 3519038
+    - 3519028
+    - 3519044
+  # Durham: Ajax, Pickering, Uxbridge
+  # Exclude: Oshawa, Whitby, Clarington, Scugog, Brock (outside of CMA)
+    Durham:
+    - 3518005
+    - 3518001
+    - 3518029
+    Halton:
+  # Halton: Oakville, Milton, Halton Hills
+  # Exclude: Burlington (outside of CMA)
+    - 3524001
+    - 3524009
+    - 3524015
+  # Stragglers: Mono, Orangeville, New Tecumseth, Bradford West Gwillimbury
+    Remainder:
+    - 3522012
+    - 3522014
+    - 3543007
+    - 3543014
+Montreal:
+  pr: Quebec
+  level: CSD
+  id:
+  # Montreal Agglomeration: Baie-d'Urfé, Beaconsfield, Côte Saint-Luc,
+  # Dollard-des-Ormeaux, Dorval, Hampstead, Kirkland, L'Île-Dorval, Montréal,
+  # Montréal-Est, Montréal-Ouest, Mont-Royal, Pointe-Claire,
+  # Sainte-Anne-de-Bellevue, Westmount, Senneville
+    Agglomeration:
+    - 2466112
+    - 2466107
+    - 2466058
+    - 2466142
+    - 2466087
+    - 2466062
+    - 2466102
+    - 2466092
+    - 2466023
+    - 2466007
+    - 2466047
+    - 2466072
+    - 2466097
+    - 2466117
+    - 2466032
+    - 2466127
+  # Laval, Longueuil
+    Laval:
+    - 2465005
+    Longueuil:
+    - 2458227
+Vancouver:
+  pr: British Columbia
+  level: CSD
+  id:
+    Vancouver:
+    - 5915022
+    North Vancouver:
+    - 5915051
+    Richmond:
+    - 5915015
+    Burnaby:
+    - 5915025
+    New Westminster:
+    - 5915029
+    Surrey:
+    - 5915004
+    Coquitlam:
+    - 5915034
+    Port Moody:
+    - 5915043
+    Port Coquitlam:
+    - 5915039
+    Langley (DM):
+    - 5915001
+    Langley:
+    - 5915002
+    White Rock:
+    - 5915007
+    Delta:
+    - 5915011
+    Metro Vancouver A:
+    - 5915020
+    Belcarra:
+    - 5915036
+    Anmore:
+    - 5915038
+    North Vancouver (DM):
+    - 5915046
+    West Vancouver:
+    - 5915055
+    Bowen Island:
+    - 5915062
+    Lions Bay:
+    - 5915065
+    Pitt Meadows:
+    - 5915070
+    Maple Ridge:
+    - 5915075
+    Tsawwassen:
+    - 5915802

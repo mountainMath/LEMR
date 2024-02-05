@@ -1,0 +1,281 @@
+---
+title: "An overview over the Low End of Market Rental"
+author: "Jens von Bergmann"
+format:
+  html:
+    fig-width: 8
+    fig-height: 6
+    output-file: "index"
+  pdf:
+    fig-width: 8
+    fig-height: 6
+    papersize: letter
+    fontsize: 12pt
+    fig-format: png
+  docx:
+    fig-width: 8
+    fig-height: 6
+    fig-format: png
+execute:
+  echo: false
+  warning: false
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(cancensus)
+library(dotdensity)
+library(sf)
+library(mountainmathHelpers)
+source(here::here("R/lemr_theme.R"))
+
+db_list <- dir(here::here("sqlite"), full.names = TRUE)
+
+year_colours <- setNames(c("#e41a1c","#377eb8","#4daf4a","#984ea3"),
+                         c("2006","2011","2016","2021"))
+
+lemr_regions <- c("59933","35535","24462","505","12205","46602","48835","48825")
+lemr_region_order <- list_census_regions("2021") |> filter(region %in% lemr_regions) |>
+  arrange(-pop) |>
+  mutate(name=gsub("-","–",name)) |>
+  pull(name)
+short_lemr_regions <- lemr_regions |>
+  lapply(\(x)substr(x,nchar(x)-2,nchar(x))) |>
+  unlist()
+```
+
+```{r}
+lemr_regions <- c("59933","35535","24462","505","12205","46602","48835","48825")
+lemr_region_order <- list_census_regions("2021") |> filter(region %in% lemr_regions) |>
+  arrange(-pop) |>
+  mutate(name=gsub("-","–",name)) |>
+  pull(name)
+short_lemr_regions <- lemr_regions |>
+  lapply(\(x)substr(x,nchar(x)-2,nchar(x))) |>
+  unlist()
+```
+
+
+
+The Low End of Market Rental (LEMR) project has defined the "low end of the rental market" based on regional incomes of renter families by family size and translated this into rents by bedroom ranges as described in more detail elsewhere.
+
+
+```{r fig-lemr-threshold, fig.cap="Inflation-adjusted thresholds for the low end of the market by bedroom range and metropolitan area for census years 2006 through 2021", fig.height=6, fig.width=8, warning=FALSE}
+years <- seq(2006,2021,5) |> as.character()
+
+inflation <- cansim::get_cansim_vector("v41693271") |>
+  filter(strftime(Date,"%m")=="01") |>
+  mutate(Year=strftime(Date,"%Y")) |>
+  select(Year,CPI=val_norm) |>
+  filter(Year %in% years) |>
+  mutate(CPI=CPI/last(CPI,order_by=Year)) 
+
+
+thresholds <- map_df(years,\(year){
+  conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[grepl(paste0("ct_cma_",year),db_list)])
+  thresholds <- conn |> tbl("ct_cma") |> 
+    filter(nchar(geography)==3) |>
+    select(region,
+           lem_threshold_0_and_1_bedrooms,
+           lem_threshold_1_and_2_bedrooms,
+           lem_threshold_2_and_3_bedrooms,
+           lem_threshold_3_bedrooms) |>
+    distinct() |>
+    #filter(region=="Vancouver") |>
+    collect()
+  DBI::dbDisconnect(conn)
+  thresholds |>
+    mutate(Year=year)
+}) |>
+  left_join(inflation,by="Year") |>
+  mutate(Year=factor(Year),
+         region=factor(region,levels=lemr_region_order))
+
+
+thresholds |>
+  pivot_longer(matches("threshold"),names_to="Bedrooms") |>
+  mutate(Bedrooms=gsub("lem_threshold_","",Bedrooms) |> gsub("_"," ",x=_)) |>
+  mutate(value=gsub("\\$","",value) |> as.numeric()) |>
+  mutate(real_rent=value/CPI) |>
+ggplot(aes(y=Bedrooms,x=real_rent,fill=Year)) +
+  geom_bar(stat="identity",position="dodge") +
+  facet_wrap(~region) +
+  scale_fill_manual(values=year_colours) +
+  scale_x_continuous(labels=scales::dollar) +
+  guides(fill=guide_legend(reverse=TRUE)) +
+  labs(title="Shelter cost cutoffs for the low end of the market",
+       y="Bedroom range",
+       x="Real rents (2021 dollars)",
+       caption="LEMR, StatCan Census 2006 through 2021")
+```
+
+
+The changing thresholds reflect increasing real incomes of families and unattached individuals over this time period.
+@fig-stock-bdrm shows how households distribute over the housing stock by tenure and LEMR status.
+
+```{r}
+data_stock_bedrooms <- map_df(years,\(year){
+  conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[grepl(paste0("ct_cma_",year),db_list)])
+  data <- conn |> tbl("ct_cma") |> 
+    filter(nchar(geography)==3) |>
+    filter(mobility_status=="Total - Mobility status 5 years ago of the primary household maintainer",
+         tenure!="Total - Tenure including subsidized dwelling",
+         tenure!="Total - Tenure",
+         structural_type_of_dwelling=="Total - Structural type of dwelling",
+         condominium_status=="Total - Condominium Status",
+         household_type=="Total - Household type",
+         core_housing_need=="Total - Core housing need") |>
+    distinct() |>
+    collect()
+  DBI::dbDisconnect(conn)
+  data |>
+    mutate(Year=year) |>
+    filter(Year=="2006"|tenure!="Renters")
+}) |>
+  mutate(Year=factor(Year)) |>
+  select(Year,GeoUID=geography,region,tenure,total_units,matches("^lem_\\d+|non_lem")) %>% 
+  filter(!((.) |> select(Year,GeoUID,region,tenure) |> duplicated())) |>
+  pivot_longer(matches('lem_\\d+|non_lem'),names_pattern="(lem|non_lem)_(.+)",
+               names_to=c("lemr","bedrooms"),values_to="value") |>
+  mutate(bedrooms=gsub("_"," ",bedrooms)) |>
+  mutate(Category=case_when(tenure=="Owners" ~ "Owner",
+                            tenure=="Subsidized housing" ~ paste0("Subsidized housing - ",lemr),
+                            tenure=="Renters" ~ paste0("Renter - ",lemr),
+                            tenure=="Renters" ~ "Renter",
+                            TRUE ~ paste0("Market - ",lemr))) |>
+  summarize(value=sum(value),.by=c(GeoUID,region,Year,Category,bedrooms)) |>
+  pivot_wider(names_from = Category) |>
+  mutate(region=factor(region,levels=lemr_region_order))
+
+```
+
+```{r fig-stock-bdrm, fig.cap="Occupied housing stock by bedroom ranges, split by tenure and LEMR status in 2006, 2011, 2016, and 2021.", fig.height=6.5, warning=FALSE}
+lemr_cats <- setdiff(names(data_stock_bedrooms),c("GeoUID","bedrooms","Households","region","Year"))
+
+lemr_names <- lemr_cats |>
+  gsub(" - non_lem","",x=_) |>
+  gsub(" - lem"," (low end)",x=_)
+
+lemr_renames <- setNames(lemr_cats,lemr_names)
+
+lemr_colours <- setNames(RColorBrewer::brewer.pal(length(lemr_cats),"Paired") |> rev(),lemr_names)
+
+data_stock_bedrooms |>
+  filter(GeoUID %in% short_lemr_regions) |>
+  pivot_longer(lemr_cats) |>
+  mutate(name=factor(name,levels=lemr_cats)) |>
+  mutate(name=fct_recode(name,!!!lemr_renames)) |>
+  ggplot(aes(y=bedrooms,x=value,fill=fct_rev(name))) +
+    geom_bar(stat="identity") +
+  facet_grid(Year~region,scale="free_x") +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values=lemr_colours) +
+  scale_x_continuous(labels=\(x)scales::comma(x,scale=10^-3,suffix="k")) +
+  guides(fill = guide_legend(nrow=2,reverse = FALSE)) +
+  labs(title="Housing stock by bedrooms ranges",
+       y=NULL,x="Number of (occupied) units",
+       fill=NULL,
+       caption="LEMR, StatCan Census 2021")
+```
+
+Subsidized units include units in dedicated non-market housing as well as households receiving housing supports living in market housing. Generally the housing stock has grown over time in each of the metro areas, with a small portion of that growth in Montréal, Ottawa, and Halifax being accounted for by the geographic extent of these metro areas growing over the time period.
+
+@fig-rental-stock-bedrooms focuses in on rental housing units only, distinguishing what share is renting at rates that can serve the low end of the market, throwing all subsidized units into the mix.
+
+
+```{r fig-rental-stock-bedrooms, fig.cap="Low end of the market share of the rental housing stock by bedroom ranges.", warning=FALSE}
+data_stock_bedrooms |>
+  filter(GeoUID %in% short_lemr_regions) |>
+  pivot_longer(lemr_cats) |>
+  mutate(name=factor(name,levels=lemr_cats)) |>
+  mutate(name=fct_recode(name,!!!lemr_renames)) |>
+  filter(name!="Owner") |>
+  mutate(Share=value/sum(value,na.rm=TRUE),.by=c(GeoUID,region,Year,bedrooms)) |>
+  ggplot(aes(y=fct_rev(Year),x=Share,fill=fct_rev(name))) +
+  geom_vline(xintercept = 0.5) +
+  geom_bar(stat="identity") +
+  facet_grid(bedrooms~region) +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values=lemr_colours) +
+  scale_x_continuous(labels=scales::percent) +
+  guides(fill = guide_legend(nrow=2,reverse = TRUE)) +
+  labs(title="Rental housing stock by bedroom ranges",
+       y=NULL,x="Share out of (occupied) rental units",
+       fill=NULL,
+       caption="LEMR, StatCan Census 2006 through 2021")
+```
+
+This highlights how in most regions and bedroom ranges median renter family incomes can afford over half of the rental housing units. However, these are relative to rents paid by households at the time of each census and units may not be available to families looking to rent at these rent levels, especially in regions with binding rent control.
+
+The steepest challenges are faced by unattached individuals in Toronto and Vancouver, followed by Halifax. Here individuals with median incomes can only afford studio or 1-bedroom units well below median rents. Toronto also shows the clearest decline in affordability over time, with the share of rental units affordable to median incomes being relatively low to start with and dropping across all family/bedroom ranges.
+
+
+```{r}
+data_stock_bedrooms_mob <- map_df(years,\(year){
+  conn <- DBI::dbConnect(RSQLite::SQLite(), db_list[grepl(paste0("ct_cma_",year),db_list)])
+  data <- conn |> tbl("ct_cma") |> 
+    filter(nchar(geography)==3) |>
+    filter(mobility_status %in% c("Mover (in last 1 year)","Mover (in last 5 years)",
+                                  "Total - Mobility status 5 years ago of the primary household maintainer"),
+         tenure!="Total - Tenure including subsidized dwelling",
+         tenure!="Total - Tenure",
+         structural_type_of_dwelling=="Total - Structural type of dwelling",
+         condominium_status=="Total - Condominium Status",
+         household_type=="Total - Household type",
+         core_housing_need=="Total - Core housing need") |>
+    #filter(region=="Vancouver") |>
+    distinct() |>
+    collect()
+  DBI::dbDisconnect(conn)
+  data |>
+    mutate(Year=year) |>
+    filter(Year=="2006"|tenure!="Renters")
+}) |>
+  mutate(Year=factor(Year)) |>
+  select(Year,GeoUID=geography,region,tenure,mobility_status,total_units,matches("^lem_\\d+|non_lem")) %>% 
+  filter(!((.) |> select(Year,GeoUID,region,tenure,mobility_status) |> duplicated())) |>
+  pivot_longer(matches('lem_\\d+|non_lem'),names_pattern="(lem|non_lem)_(.+)",
+               names_to=c("lemr","bedrooms"),values_to="value") |>
+  mutate(bedrooms=gsub("_"," ",bedrooms)) |>
+  mutate(Category=case_when(tenure=="Owners" ~ "Owner",
+                            tenure=="Subsidized housing" ~ paste0("Subsidized housing - ",lemr),
+                            tenure=="Renters" ~ paste0("Renter - ",lemr),
+                            tenure=="Renters" ~ "Renter",
+                            TRUE ~ paste0("Market - ",lemr))) |>
+  summarize(value=sum(value),.by=c(GeoUID,region,Year,Category,bedrooms,mobility_status)) |>
+  pivot_wider(names_from = Category) |>
+  mutate(region=factor(region,levels=lemr_region_order)) |>
+  mutate(mobility_status=recode(mobility_status,"Total - Mobility status 5 years ago of the primary household maintainer"="Total")) |>
+  mutate(mobility_status=factor(mobility_status,levels=c("Total","Mover (in last 5 years)","Mover (in last 1 year)")))
+
+```
+
+Lastly, to understand the availability of LEMR units we compare the share of LEMR units among all units, units that have been moved in during the 5 years prior to the census, and units moved into during the year before the census in @fig-rental-mobility. The latter one are less impacted by rent control and reflect availability of such units.
+
+```{r fig-rental-mobility, fig.cap="Low end of the market share of the rental housing stock by bedroom ranges and how long the units have been occupied.", warning=FALSE}
+data_stock_bedrooms_mob |>
+  filter(GeoUID %in% short_lemr_regions) |>
+  pivot_longer(lemr_cats) |>
+  mutate(name=factor(name,levels=lemr_cats)) |>
+  mutate(name=fct_recode(name,!!!lemr_renames)) |>
+  filter(name!="Owner") |>
+  mutate(low_cat=ifelse(grepl("low|Subs",name),"Low end","Rental")) |>
+  summarise(value=sum(value,na.rm=TRUE),.by=c(GeoUID,region,Year,bedrooms,mobility_status,low_cat)) |>
+  mutate(Share=value/sum(value,na.rm=TRUE),.by=c(GeoUID,region,Year,bedrooms,mobility_status)) |>
+  filter(low_cat=="Low end") |>
+  ggplot(aes(y=fct_rev(Year),x=Share,fill=fct_rev(mobility_status))) +
+  geom_vline(xintercept = 0.5) +
+  geom_bar(stat="identity",position="dodge") +
+  facet_grid(bedrooms~region) +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values=sanzo::trios$c157) +
+  scale_x_continuous(labels=scales::percent) +
+  guides(fill = guide_legend(nrow=1,reverse = TRUE)) +
+  labs(title="Rental housing stock by bedroom ranges",
+       y=NULL,x="Share out of (occupied) rental units",
+       fill=NULL,
+       caption="LEMR, StatCan Census 2006 through 2021")
+```
+
+Whiles some regions like Edmonton and to a slightly lesser extent Calgary and Montréal show little difference for rents of recently moved in units, the effect is quite strong in other regions.
+
