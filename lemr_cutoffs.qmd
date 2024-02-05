@@ -63,13 +63,6 @@ pumf_2021 |>
   arrange(EFCAT,CMA)
 ```
 
-```{r}
-pumf_2021 |> 
-  filter(TENUR=="Renter or Dwelling provided by the local government, First Nation or Indian band",
-         SUBSIDY=="Not subsidized",
-         EFSIZE=="3 persons",
-         PRIHM=="Person is primary maintainer" ) |> 
-  summarize(ef_income=mean(ef_income,na.rm=TRUE),.by=CMA)
-```
+
 
 
